@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "divineapi-western-astrology-mcp"
+version = "1.0.0"
+description = "Official MCP server for Divine API's Western Astrology services — Natal, Synastry, Transit, Composite, Progressions"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Divine API", email = "admin@divineapi.com" },
+]
+keywords = [
+    "mcp", "astrology", "western", "natal", "synastry", "transit",
+    "horoscope", "divineapi", "composite", "progressions",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "mcp[cli]>=1.2.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.0.0",
+    "pyjwt>=2.0.0",
+]
+
+[project.optional-dependencies]
+http = [
+    "uvicorn>=0.30.0",
+    "starlette>=0.37.0",
+]
+
+[project.urls]
+Homepage = "https://divineapi.com"
+Documentation = "https://developers.divineapi.com/western-api"
+Repository = "https://github.com/DivineAPI/mcp-western-astrology"
+
+[project.scripts]
+divineapi-western-astrology-mcp = "divineapi_western_astrology_mcp:main"
+divineapi-western-astrology-mcp-http = "divineapi_western_astrology_mcp:main_http"
+
+[tool.hatch.build.targets.wheel]
+packages = ["divineapi_western_astrology_mcp"]
