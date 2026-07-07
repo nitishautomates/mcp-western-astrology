@@ -3,7 +3,7 @@
 Divine API - Western Astrology MCP Server
 
 Official MCP server by Divine API for Western Astrology services.
-Provides tools for Natal Charts, Synastry, Transits, Composite Charts,
+Provides 56 tools for Natal Charts, Synastry, Transits, Composite Charts,
 Progressions, Returns, Prenatal analysis, and Advanced Natal techniques.
 
 Setup:
@@ -34,6 +34,7 @@ from mcp.server.auth.provider import (
 )
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyUrl, BaseModel, Field, ConfigDict, field_validator
@@ -58,7 +59,7 @@ _transport_security = TransportSecuritySettings(
 
 
 # ──────────────────────────────────────────────
-# OAuth Provider — maps OAuth Client ID/Secret to Divine API credentials
+# OAuth Provider -maps OAuth Client ID/Secret to Divine API credentials
 # ──────────────────────────────────────────────
 
 
@@ -186,7 +187,7 @@ mcp = FastMCP(
 )
 
 # ──────────────────────────────────────────────
-# Configuration — Base URLs for API hosts
+# Configuration -Base URLs for API hosts
 # ──────────────────────────────────────────────
 
 API_HOST_4 = "https://astroapi-4.divineapi.com"
@@ -239,12 +240,80 @@ def _get_credentials(ctx: Context | None = None) -> tuple[str, str]:
 
 VALID_GENDERS = {"male", "female"}
 
+# Friendly house-system names mapped to the Swiss Ephemeris single-letter
+# codes the live API accepts. The API rejects word values like "placidus"
+# on astroapi-4 and silently ignores them on astroapi-8, so every payload
+# must send the letter code.
+HOUSE_SYSTEM_MAP = {
+    "placidus": "P",
+    "koch": "K",
+    "porphyry": "O",
+    "regiomontanus": "R",
+    "campanus": "C",
+    "equal": "E",
+    "whole-sign": "W",
+    "whole_sign": "W",
+    "wholesign": "W",
+    "morinus": "M",
+    "alcabitius": "B",
+}
+VALID_HOUSE_SYSTEM_LETTERS = set(HOUSE_SYSTEM_MAP.values())
+HOUSE_SYSTEM_FRIENDLY_NAMES = "placidus, koch, porphyry, regiomontanus, campanus, equal, whole-sign, morinus, alcabitius"
+
+VALID_DOMINANTS_METHODS = {"TRADITIONAL", "MODERN"}
+
 TOOL_ANNOTATIONS = {
     "readOnlyHint": True,
     "destructiveHint": False,
     "idempotentHint": True,
     "openWorldHint": True,
 }
+
+
+def _resolve_house_system(value: str) -> str:
+    """Map a friendly house-system name to its single-letter API code.
+
+    Accepts friendly names case-insensitively (e.g. 'placidus', 'Whole-Sign')
+    and already-valid single letters (passed through unchanged). Raises
+    ValueError for anything else.
+    """
+    hs = (value or "").strip()
+    if not hs:
+        return "P"
+    if hs.upper() in VALID_HOUSE_SYSTEM_LETTERS:
+        return hs.upper()
+    mapped = HOUSE_SYSTEM_MAP.get(hs.lower())
+    if mapped:
+        return mapped
+    raise ValueError(
+        f"Invalid house_system '{value}'. Must be one of: {HOUSE_SYSTEM_FRIENDLY_NAMES} "
+        f"(or a single-letter code: {', '.join(sorted(VALID_HOUSE_SYSTEM_LETTERS))})"
+    )
+
+
+def _apply_house_system(payload: dict, house_system: str | None) -> str | None:
+    """Validate house_system, map it to a letter code, and add it to the payload.
+
+    Returns an error message string on invalid input, else None.
+    """
+    if house_system:
+        try:
+            payload["house_system"] = _resolve_house_system(house_system)
+        except ValueError as e:
+            return f"Error: {e}"
+    return None
+
+
+def _apply_dominants_method(payload: dict, method: str) -> str | None:
+    """Validate the dominants calculation method and add it to the payload.
+
+    Returns an error message string on invalid input, else None.
+    """
+    m = (method or "").upper().strip()
+    if m not in VALID_DOMINANTS_METHODS:
+        return f"Error: Invalid method '{method}'. Must be one of: {', '.join(sorted(VALID_DOMINANTS_METHODS))}"
+    payload["method"] = m
+    return None
 
 # ──────────────────────────────────────────────
 # Pydantic Models
@@ -269,7 +338,7 @@ class WesternNatalInput(BaseModel):
     lon: str = Field(..., description="Longitude of birth place (e.g., '-74.0060')")
     tzone: str = Field(..., description="Timezone offset from UTC (e.g., '-5' for EST)")
     lan: str = Field(default="en", description="Language code for response (default 'en')")
-    house_system: str = Field(default="placidus", description="House system (default 'placidus'). Options: placidus, koch, equal, whole-sign, campanus, regiomontanus, porphyry, morinus")
+    house_system: str = Field(default="placidus", validate_default=True, description="House system (default 'placidus'). Options: placidus, koch, porphyry, regiomontanus, campanus, equal, whole-sign, morinus, alcabitius (or the single-letter codes B, C, E, K, M, O, P, R, W)")
 
     @field_validator("gender")
     @classmethod
@@ -278,6 +347,11 @@ class WesternNatalInput(BaseModel):
         if v not in VALID_GENDERS:
             raise ValueError(f"Gender must be 'male' or 'female', got '{v}'")
         return v
+
+    @field_validator("house_system")
+    @classmethod
+    def validate_house_system(cls, v: str) -> str:
+        return _resolve_house_system(v)
 
 
 class WesternSynastryInput(BaseModel):
@@ -314,7 +388,12 @@ class WesternSynastryInput(BaseModel):
     p2_tzone: str = Field(..., description="Timezone of person 2 (e.g., '0')")
 
     lan: str = Field(default="en", description="Language code for response (default 'en')")
-    house_system: str = Field(default="placidus", description="House system (default 'placidus')")
+    house_system: str = Field(default="placidus", validate_default=True, description="House system (default 'placidus'). Options: placidus, koch, porphyry, regiomontanus, campanus, equal, whole-sign, morinus, alcabitius (or the single-letter codes B, C, E, K, M, O, P, R, W)")
+
+    @field_validator("house_system")
+    @classmethod
+    def validate_house_system(cls, v: str) -> str:
+        return _resolve_house_system(v)
 
 
 class WesternTransitPlanetInput(BaseModel):
@@ -329,9 +408,6 @@ class WesternTransitPlanetInput(BaseModel):
     lat: str = Field(..., description="Latitude (e.g., '40.7128')")
     lon: str = Field(..., description="Longitude (e.g., '-74.0060')")
     tzone: str = Field(..., description="Timezone offset from UTC (e.g., '-5')")
-
-
-# ──────────────────────────────────────────────
 
 
 class WesternFullTransitInput(BaseModel):
@@ -362,6 +438,50 @@ class WesternFullTransitInput(BaseModel):
     transit_lon: str = Field(..., description="Transit longitude (e.g., '77.1025')")
     transit_tzone: str = Field(..., description="Transit timezone (e.g., '5.5')")
 
+
+class WesternMoonPhaseCalendarInput(BaseModel):
+    """Input for the moon phase calendar API: month, year, and location only."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
+
+    month: str = Field(..., description="Month number (e.g., '05' for May)", min_length=1, max_length=2)
+    year: str = Field(..., description="Year (e.g., '2025')", min_length=4, max_length=4)
+    place: str = Field(..., description="Place name (e.g., 'New York')", min_length=1, max_length=200)
+    lat: str = Field(..., description="Latitude of the place (e.g., '40.7128')")
+    lon: str = Field(..., description="Longitude of the place (e.g., '-74.0060')")
+    tzone: str = Field(..., description="Timezone offset from UTC (e.g., '-5' for EST)")
+    lan: str = Field(default="en", description="Language code for response (default 'en')")
+    full_name: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    day: str | None = Field(default=None, description="Deprecated: this endpoint is month-scoped and ignores day. Accepted for backward compatibility, not sent to the API.")
+    hour: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    min: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    sec: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    gender: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    house_system: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+
+
+class WesternFixedStarsListInput(BaseModel):
+    """Input for the fixed stars list API. The endpoint takes no parameters; every field here is deprecated and ignored."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
+
+    full_name: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    day: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    month: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    year: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    hour: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    min: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    sec: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    gender: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    place: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    lat: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    lon: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    tzone: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    lan: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+    house_system: str | None = Field(default=None, description="Deprecated: ignored by this endpoint. Accepted for backward compatibility, not sent to the API.")
+
+
+# ──────────────────────────────────────────────
 # Shared API Client
 # ──────────────────────────────────────────────
 
@@ -373,7 +493,12 @@ async def _call_divine_api(
     api_key: str | None = None,
     auth_token: str | None = None,
 ) -> str:
-    """Make a POST request to Divine API and return formatted JSON response."""
+    """Make a POST request to Divine API and return formatted JSON response.
+
+    Raises ToolError on any failure (non-2xx, network error, or an upstream
+    error envelope returned with HTTP 200) so MCP clients see isError: true
+    instead of a success result whose text merely contains 'Error: ...'.
+    """
     payload["api_key"] = api_key or DIVINE_API_KEY
     clean_payload = {k: v for k, v in payload.items() if v is not None}
     url = f"{base_url}{endpoint}"
@@ -389,16 +514,28 @@ async def _call_divine_api(
             )
             response.raise_for_status()
             data = response.json()
-            return json.dumps(data, indent=2, ensure_ascii=False)
-
     except httpx.HTTPStatusError as e:
-        return _handle_http_error(e)
-    except httpx.TimeoutException:
-        return "Error: Request timed out. The Divine API server may be slow. Please try again."
-    except httpx.ConnectError:
-        return "Error: Could not connect to Divine API. Please check your internet connection."
+        raise ToolError(_handle_http_error(e)) from e
+    except httpx.TimeoutException as e:
+        raise ToolError("Request timed out. The Divine API server may be slow. Please try again.") from e
+    except httpx.ConnectError as e:
+        raise ToolError("Could not connect to Divine API. Please check your internet connection.") from e
     except Exception as e:
-        return f"Error: Unexpected error - {type(e).__name__}: {str(e)}"
+        raise ToolError(f"Unexpected error - {type(e).__name__}: {str(e)}") from e
+
+    # Some endpoints return HTTP 200 with an error envelope in the body.
+    # Two shapes are used across the Divine API hosts:
+    #   astroapi-4 (legacy):  {"success": 2, "msg": ["Please enter valid ..."]}
+    #   astroapi-8 (newer):   {"status": "error", "message": "...", ...}
+    # A successful legacy response is success==1; newer success omits "success".
+    if isinstance(data, dict):
+        if data.get("status") == "error" or ("success" in data and str(data.get("success")) != "1"):
+            msg = data.get("message") or data.get("msg") or "Divine API returned an error."
+            if isinstance(msg, list):
+                msg = "; ".join(str(m) for m in msg)
+            raise ToolError(f"Divine API error: {msg}")
+
+    return json.dumps(data, indent=2, ensure_ascii=False)
 
 
 def _handle_http_error(e: httpx.HTTPStatusError) -> str:
@@ -500,8 +637,6 @@ def _transit_planet_payload(params: WesternTransitPlanetInput) -> dict:
     }
 
 
-# ══════════════════════════════════════════════
-
 def _full_transit_payload(params) -> dict:
     return {
         "full_name": params.full_name, "day": params.day, "month": params.month,
@@ -515,7 +650,9 @@ def _full_transit_payload(params) -> dict:
         "transit_lon": params.transit_lon, "transit_tzone": params.transit_tzone,
     }
 
-# NATAL TOOLS (10) — astroapi-4.divineapi.com
+
+# ══════════════════════════════════════════════
+# NATAL TOOLS (10) - astroapi-4.divineapi.com
 # ══════════════════════════════════════════════
 
 
@@ -613,8 +750,11 @@ async def divine_western_general_sign_report(
         "full_name": full_name, "day": day, "month": month, "year": year,
         "hour": hour, "min": min, "sec": sec, "gender": gender,
         "place": place, "lat": lat, "lon": lon, "tzone": tzone,
-        "lan": lan, "house_system": house_system,
+        "lan": lan,
     }
+    err = _apply_house_system(payload, house_system)
+    if err:
+        return err
     return await _call_divine_api(f"/western-api/v2/general-sign-report/{planet}", payload, API_HOST_4, api_key=api_key, auth_token=auth_token)
 
 
@@ -638,8 +778,11 @@ async def divine_western_general_house_report(
         "full_name": full_name, "day": day, "month": month, "year": year,
         "hour": hour, "min": min, "sec": sec, "gender": gender,
         "place": place, "lat": lat, "lon": lon, "tzone": tzone,
-        "lan": lan, "house_system": house_system,
+        "lan": lan,
     }
+    err = _apply_house_system(payload, house_system)
+    if err:
+        return err
     return await _call_divine_api(f"/western-api/v2/general-house-report/{planet}", payload, API_HOST_4, api_key=api_key, auth_token=auth_token)
 
 
@@ -670,15 +813,25 @@ async def divine_western_ascendant_report(params: WesternNatalInput, ctx: Contex
 
 
 @mcp.tool(name="divine_western_moon_phase_calendar", annotations=TOOL_ANNOTATIONS)
-async def divine_western_moon_phase_calendar(params: WesternNatalInput, ctx: Context) -> str:
-    """Get a Moon phase calendar based on birth data.
+async def divine_western_moon_phase_calendar(params: WesternMoonPhaseCalendarInput, ctx: Context) -> str:
+    """Get a Moon phase calendar for a given month, year, and location.
 
     Returns a calendar of Moon phases showing New Moons, Full Moons, and
     quarter phases. Useful for planning activities aligned with lunar cycles,
     understanding emotional rhythms, and timing important decisions.
+    Only month, year, and location are needed; birth details are not used.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/moon-phase-calendar", _natal_payload(params), API_HOST_4, api_key=api_key, auth_token=auth_token)
+    payload = {
+        "month": params.month,
+        "year": params.year,
+        "place": params.place,
+        "lat": params.lat,
+        "lon": params.lon,
+        "tzone": params.tzone,
+        "lan": params.lan,
+    }
+    return await _call_divine_api("/western-api/v1/moon-phase-calendar", payload, API_HOST_4, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_natal_insights", annotations=TOOL_ANNOTATIONS)
@@ -695,7 +848,7 @@ async def divine_western_natal_insights(params: WesternNatalInput, ctx: Context)
 
 
 # ══════════════════════════════════════════════
-# SYNASTRY TOOLS (13) — astroapi-4.divineapi.com
+# SYNASTRY TOOLS (13) -astroapi-4.divineapi.com
 # ══════════════════════════════════════════════
 
 
@@ -866,20 +1019,39 @@ async def divine_western_synastry_financial_compat(params: WesternSynastryInput,
 
 
 # ══════════════════════════════════════════════
-# TRANSIT TOOLS (8) — astroapi-4 & astroapi-8
+# TRANSIT TOOLS (11) - astroapi-4 & astroapi-8
 # ══════════════════════════════════════════════
 
 
 @mcp.tool(name="divine_western_transit_basic", annotations=TOOL_ANNOTATIONS)
-async def divine_western_transit_basic(params: WesternNatalInput, ctx: Context) -> str:
-    """Get basic transit overview for the natal chart.
+async def divine_western_transit_basic(
+    params: WesternNatalInput,
+    ctx: Context,
+    transit_day: str = Field(..., description="Transit day (e.g., '10')"),
+    transit_month: str = Field(..., description="Transit month (e.g., '02')"),
+    transit_year: str = Field(..., description="Transit year (e.g., '2024')"),
+    transit_hour: str = Field(..., description="Transit hour in 24h format (e.g., '18')"),
+    transit_min: str = Field(..., description="Transit minute (e.g., '10')"),
+    transit_sec: str = Field(..., description="Transit second (e.g., '05')"),
+) -> str:
+    """Get basic transit overview for the natal chart at a specific moment.
 
-    Returns current planetary transits and their aspects to natal planets.
-    Transits show how the current sky activates the birth chart, indicating
-    periods of opportunity, challenge, and transformation in various life areas.
+    Returns the planetary transits at the given transit date/time and their
+    aspects to natal planets. Transits show how the sky at that moment
+    activates the birth chart, indicating periods of opportunity, challenge,
+    and transformation in various life areas.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/transit/basic", _natal_payload(params), API_HOST_4, api_key=api_key, auth_token=auth_token)
+    payload = _natal_payload(params)
+    payload.update({
+        "transit_day": transit_day,
+        "transit_month": transit_month,
+        "transit_year": transit_year,
+        "transit_hour": transit_hour,
+        "transit_min": transit_min,
+        "transit_sec": transit_sec,
+    })
+    return await _call_divine_api("/western-api/v1/transit/basic", payload, API_HOST_4, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_transit_daily", annotations=TOOL_ANNOTATIONS)
@@ -895,52 +1067,103 @@ async def divine_western_transit_daily(params: WesternNatalInput, ctx: Context) 
 
 
 @mcp.tool(name="divine_western_transit_weekly", annotations=TOOL_ANNOTATIONS)
-async def divine_western_transit_weekly(params: WesternNatalInput, ctx: Context) -> str:
+async def divine_western_transit_weekly(
+    params: WesternNatalInput,
+    ctx: Context,
+    transit_planet: str = Field(..., description="Transiting planet to track for the week (e.g., 'moon', 'mercury', 'venus', 'mars')"),
+) -> str:
     """Get weekly transit report for the natal chart.
 
-    Returns this week's transits affecting the birth chart with interpretations.
-    Covers the major planetary movements and aspects forming during the week,
-    highlighting key days for action, reflection, or caution.
+    Returns this week's transits of the chosen transit_planet affecting the
+    birth chart, with aspect timings. Covers the planet's movements and
+    aspects forming during the week, highlighting key days for action,
+    reflection, or caution.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/transit/weekly", _natal_payload(params), API_HOST_4, api_key=api_key, auth_token=auth_token)
+    payload = _natal_payload(params)
+    payload["transit_planet"] = transit_planet
+    return await _call_divine_api("/western-api/v1/transit/weekly", payload, API_HOST_4, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_transit_monthly", annotations=TOOL_ANNOTATIONS)
-async def divine_western_transit_monthly(params: WesternNatalInput, ctx: Context) -> str:
+async def divine_western_transit_monthly(
+    params: WesternNatalInput,
+    ctx: Context,
+    transit_planet: str = Field(..., description="Transiting planet to track for the month (e.g., 'moon', 'mercury', 'venus', 'mars')"),
+    transit_month: str = Field(..., description="Transit month (e.g., '10')"),
+    transit_year: str = Field(..., description="Transit year (e.g., '2025')"),
+    transit_lat: str = Field(..., description="Latitude of the transit location (e.g., '28.6139')"),
+    transit_lon: str = Field(..., description="Longitude of the transit location (e.g., '77.2090')"),
+    transit_tzone: str = Field(..., description="Timezone offset of the transit location (e.g., '5.5')"),
+    transit_place: str = Field(..., description="Transit place name (e.g., 'New Delhi')"),
+    aspects_type: str | None = Field(default=None, description="Optional aspect filter (e.g., 'ALL')"),
+    aspect_orbs_type: str | None = Field(default=None, description="Optional aspect orb type (e.g., 'FIXED')"),
+    aspect_orbs_value: str | None = Field(default=None, description="Optional aspect orb value (e.g., '5_30')"),
+) -> str:
     """Get monthly transit report for the natal chart.
 
-    Returns this month's transits affecting the birth chart with interpretations.
-    Covers slower-moving outer planet transits, lunations (New and Full Moons),
-    and significant planetary ingresses that shape the month's themes.
+    Returns the chosen transit_planet's transits over the given month
+    affecting the birth chart, with aspect start/peak/end timings.
+    Covers the planet's movements and aspects that shape the month's themes.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v2/transit/monthly", _natal_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
+    payload = _natal_payload(params)
+    payload.update({
+        "transit_planet": transit_planet,
+        "transit_month": transit_month,
+        "transit_year": transit_year,
+        "transit_lat": transit_lat,
+        "transit_lon": transit_lon,
+        "transit_tzone": transit_tzone,
+        "transit_place": transit_place,
+    })
+    if aspects_type is not None:
+        payload["aspects_type"] = aspects_type
+    if aspect_orbs_type is not None:
+        payload["aspect_orbs_type"] = aspect_orbs_type
+    if aspect_orbs_value is not None:
+        payload["aspect_orbs_value"] = aspect_orbs_value
+    return await _call_divine_api("/western-api/v2/transit/monthly", payload, API_HOST_8, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_transit_house", annotations=TOOL_ANNOTATIONS)
-async def divine_western_transit_house(params: WesternNatalInput, ctx: Context) -> str:
+async def divine_western_transit_house(params: WesternFullTransitInput, ctx: Context) -> str:
     """Get transit house overlay report for the natal chart.
 
-    Returns which natal houses the transiting planets are currently moving
-    through, indicating which life areas are currently being activated and
-    energized by cosmic influences.
+    Returns which natal houses the transiting planets are moving through at
+    the given transit date/time and location, indicating which life areas
+    are being activated and energized by cosmic influences.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/transit/house", _natal_payload(params), API_HOST_4, api_key=api_key, auth_token=auth_token)
+    return await _call_divine_api("/western-api/v1/transit/house", _full_transit_payload(params), API_HOST_4, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_full_transit", annotations=TOOL_ANNOTATIONS)
-async def divine_western_full_transit(params: WesternNatalInput, ctx: Context) -> str:
+async def divine_western_full_transit(
+    params: WesternFullTransitInput,
+    ctx: Context,
+    transit_planet: str = Field(..., description="Transiting planet to analyze (e.g., 'moon', 'mercury', 'venus', 'mars')"),
+    aspects_type: str | None = Field(default=None, description="Optional aspect filter (e.g., 'ALL')"),
+    aspect_orbs_type: str | None = Field(default=None, description="Optional aspect orb type (e.g., 'FIXED')"),
+    aspect_orbs_value: str | None = Field(default=None, description="Optional aspect orb value (e.g., '5_30')"),
+) -> str:
     """Get a comprehensive full transit report for the natal chart.
 
-    Returns a complete transit analysis including all transiting planet
-    positions, aspects to natal planets, house transits, and detailed
-    interpretations. This is the most thorough transit report available,
-    combining daily, weekly, and monthly perspectives.
+    Returns a complete transit analysis for the chosen transit_planet at the
+    given transit date and location: aspects to natal planets with
+    start/peak/end times and detailed interpretations. This is the most
+    thorough single-planet transit report available.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/full-transit", _natal_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
+    payload = _full_transit_payload(params)
+    payload["transit_planet"] = transit_planet
+    if aspects_type is not None:
+        payload["aspects_type"] = aspects_type
+    if aspect_orbs_type is not None:
+        payload["aspect_orbs_type"] = aspect_orbs_type
+    if aspect_orbs_value is not None:
+        payload["aspect_orbs_value"] = aspect_orbs_value
+    return await _call_divine_api("/western-api/v1/full-transit", payload, API_HOST_8, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_planet_retrograde_transit", annotations=TOOL_ANNOTATIONS)
@@ -1006,7 +1229,8 @@ async def divine_western_planetary_ingress(params: WesternTransitPlanetInput, ct
     return await _call_divine_api("/western-api/v1/planetary-ingress", _transit_planet_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
 
 
-# COMPOSITE TOOLS (4) — astroapi-8.divineapi.com
+# ══════════════════════════════════════════════
+# COMPOSITE TOOLS (4) - astroapi-8.divineapi.com
 # ══════════════════════════════════════════════
 
 
@@ -1062,7 +1286,7 @@ async def divine_western_composite_natal_wheel_chart(params: WesternSynastryInpu
 
 
 # ══════════════════════════════════════════════
-# ADVANCED NATAL TOOLS (11) — astroapi-8.divineapi.com
+# ADVANCED NATAL TOOLS (11) -astroapi-8.divineapi.com
 # ══════════════════════════════════════════════
 
 
@@ -1093,28 +1317,34 @@ async def divine_western_asteroid_positions(params: WesternNatalInput, ctx: Cont
 
 
 @mcp.tool(name="divine_western_fixed_stars_list", annotations=TOOL_ANNOTATIONS)
-async def divine_western_fixed_stars_list(params: WesternNatalInput, ctx: Context) -> str:
-    """Get a list of fixed stars relevant to the natal chart.
+async def divine_western_fixed_stars_list(ctx: Context, params: WesternFixedStarsListInput | None = None) -> str:
+    """Get the catalog of fixed star names supported by the API.
 
-    Returns fixed stars that conjoin or are near natal planets and angles.
-    Fixed stars are distant suns that add a mythological and fate-oriented
-    layer to chart interpretation, often indicating exceptional talent,
-    fame, or specific life events.
+    Returns the full list of fixed star identifiers (e.g. 'Abhijit',
+    'Acrux', 'Aldebaran') that can be passed to
+    divine_western_fixed_stars_details via its star_list parameter.
+    This endpoint needs no input; any provided fields are ignored.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/fixed-stars-list", _natal_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
+    return await _call_divine_api("/western-api/v1/fixed-stars-list", {}, API_HOST_8, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_fixed_stars_details", annotations=TOOL_ANNOTATIONS)
-async def divine_western_fixed_stars_details(params: WesternNatalInput, ctx: Context) -> str:
-    """Get detailed fixed star interpretations for the natal chart.
+async def divine_western_fixed_stars_details(
+    params: WesternNatalInput,
+    ctx: Context,
+    star_list: str = Field(..., description="Comma-separated fixed star names to analyze (e.g., 'Abhijit,Aboras,A3558'). Get valid names from divine_western_fixed_stars_list."),
+) -> str:
+    """Get detailed positions and placements for specific fixed stars.
 
-    Returns detailed meanings and influences of fixed stars conjunct natal
-    planets and angles, including their traditional associations, magnitude,
-    nature (benefic/malefic), and specific effects on the native's life.
+    Returns each requested star's zodiac position, house placement, and
+    motion relative to the natal chart. Pass the stars to analyze in
+    star_list; valid star names come from divine_western_fixed_stars_list.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/fixed-stars-details", _natal_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
+    payload = _natal_payload(params)
+    payload["star_list"] = star_list
+    return await _call_divine_api("/western-api/v1/fixed-stars-details", payload, API_HOST_8, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_planetary_midpoints", annotations=TOOL_ANNOTATIONS)
@@ -1195,122 +1425,229 @@ async def divine_western_other_minor_bodies(params: WesternNatalInput, ctx: Cont
 
 
 @mcp.tool(name="divine_western_dominants", annotations=TOOL_ANNOTATIONS)
-async def divine_western_dominants(params: WesternNatalInput, ctx: Context) -> str:
+async def divine_western_dominants(
+    params: WesternNatalInput,
+    ctx: Context,
+    method: str = Field(..., description="Calculation method: 'TRADITIONAL' or 'MODERN'. The two methods weight planets differently and produce different rankings."),
+) -> str:
     """Get dominant planets, signs, and elements in the natal chart.
 
     Returns analysis of which planets, signs, elements (Fire, Earth, Air,
-    Water), and modalities (Cardinal, Fixed, Mutable) dominate the chart.
+    Water), and modalities (Cardinal, Fixed, Mutable) dominate the chart,
+    using the chosen calculation method (TRADITIONAL or MODERN).
     Dominance analysis reveals the native's core temperament, preferred
     mode of expression, and psychological orientation.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/dominants", _natal_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
+    payload = _natal_payload(params)
+    err = _apply_dominants_method(payload, method)
+    if err:
+        return err
+    return await _call_divine_api("/western-api/v1/dominants", payload, API_HOST_8, api_key=api_key, auth_token=auth_token)
 
 
 # ══════════════════════════════════════════════
-# PROGRESSIONS & RETURNS TOOLS (5) — astroapi-8.divineapi.com
+# PROGRESSIONS & RETURNS TOOLS (5) -astroapi-8.divineapi.com
 # ══════════════════════════════════════════════
 
 
 @mcp.tool(name="divine_western_planet_returns_list", annotations=TOOL_ANNOTATIONS)
-async def divine_western_planet_returns_list(params: WesternNatalInput, ctx: Context) -> str:
+async def divine_western_planet_returns_list(
+    params: WesternNatalInput,
+    ctx: Context,
+    planet: str = Field(..., description="Planet whose returns to list (e.g., 'moon', 'sun', 'mercury', 'venus', 'mars')"),
+    return_year: str = Field(..., description="Year to list returns for (e.g., '2024')"),
+    return_lat: str = Field(..., description="Latitude of the return location (e.g., '19.0760')"),
+    return_lon: str = Field(..., description="Longitude of the return location (e.g., '72.8774')"),
+    return_tzone: str = Field(..., description="Timezone offset of the return location (e.g., '5.5')"),
+    return_place: str = Field(..., description="Return place name (e.g., 'Mumbai, Maharashtra, India')"),
+) -> str:
     """Get a list of planetary returns for the natal chart.
 
-    Returns dates when transiting planets return to their natal positions.
-    The most well-known is the Solar Return (birthday chart), but lunar
-    returns (monthly), Mercury returns, Venus returns, Mars returns, Jupiter
-    returns (every 12 years), and Saturn returns (every 29 years) are all
-    significant timing techniques.
+    Returns the dates in return_year when the chosen planet returns to its
+    natal position at the given return location, each with a return_key for
+    use with divine_western_planet_return_details. The most well-known is
+    the Solar Return (birthday chart), but lunar returns (monthly), Mercury
+    returns, Venus returns, Mars returns, Jupiter returns (every 12 years),
+    and Saturn returns (every 29 years) are all significant timing techniques.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/planet-returns-list", _natal_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
+    payload = _natal_payload(params)
+    payload.update({
+        "planet": planet,
+        "return_year": return_year,
+        "return_lat": return_lat,
+        "return_lon": return_lon,
+        "return_tzone": return_tzone,
+        "return_place": return_place,
+    })
+    return await _call_divine_api("/western-api/v1/planet-returns-list", payload, API_HOST_8, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_planet_return_details", annotations=TOOL_ANNOTATIONS)
-async def divine_western_planet_return_details(params: WesternNatalInput, ctx: Context) -> str:
+async def divine_western_planet_return_details(
+    params: WesternNatalInput,
+    ctx: Context,
+    planet: str = Field(..., description="Planet whose return chart to compute (e.g., 'moon', 'sun', 'mercury')"),
+    return_key: str = Field(..., description="Return identifier from divine_western_planet_returns_list (e.g., 'MOON_P_1705862940000')"),
+    return_year: str = Field(..., description="Year of the return (e.g., '2024')"),
+    return_lat: str = Field(..., description="Latitude of the return location (e.g., '19.0760')"),
+    return_lon: str = Field(..., description="Longitude of the return location (e.g., '72.8774')"),
+    return_tzone: str = Field(..., description="Timezone offset of the return location (e.g., '5.5')"),
+    return_place: str = Field(..., description="Return place name (e.g., 'Mumbai, Maharashtra, India')"),
+) -> str:
     """Get detailed planetary return chart information.
 
-    Returns the full chart details for a planetary return, including planet
+    Returns the full chart details for the planetary return identified by
+    return_key (from divine_western_planet_returns_list), including planet
     positions, house cusps, and aspects at the exact moment the transiting
     planet returns to its natal degree. The return chart is used to forecast
     themes for the upcoming cycle.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/planet-return-details", _natal_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
+    payload = _natal_payload(params)
+    payload.update({
+        "planet": planet,
+        "return_key": return_key,
+        "return_year": return_year,
+        "return_lat": return_lat,
+        "return_lon": return_lon,
+        "return_tzone": return_tzone,
+        "return_place": return_place,
+    })
+    return await _call_divine_api("/western-api/v1/planet-return-details", payload, API_HOST_8, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_progressed_lunar_events", annotations=TOOL_ANNOTATIONS)
-async def divine_western_progressed_lunar_events(params: WesternNatalInput, ctx: Context) -> str:
+async def divine_western_progressed_lunar_events(
+    params: WesternNatalInput,
+    ctx: Context,
+    prenatal_type: str = Field(..., description="Prenatal event type (e.g., 'SYZYGY' for the last New/Full Moon before birth)"),
+) -> str:
     """Get progressed lunar events for the natal chart.
 
-    Returns secondary progressed Moon phases, sign ingresses, and aspects.
-    The progressed Moon moves about one degree per month (one sign every
-    2.5 years), marking major emotional and developmental shifts. Progressed
-    New Moons and Full Moons indicate pivotal life chapters.
+    Returns secondary progressed Moon phases, sign ingresses, and aspects
+    anchored to the chosen prenatal_type. The progressed Moon moves about
+    one degree per month (one sign every 2.5 years), marking major
+    emotional and developmental shifts. Progressed New Moons and Full Moons
+    indicate pivotal life chapters.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/progressed-lunar-events", _natal_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
+    payload = _natal_payload(params)
+    payload["prenatal_type"] = prenatal_type
+    return await _call_divine_api("/western-api/v1/progressed-lunar-events", payload, API_HOST_8, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_planetary_arc_directions", annotations=TOOL_ANNOTATIONS)
-async def divine_western_planetary_arc_directions(params: WesternNatalInput, ctx: Context) -> str:
+async def divine_western_planetary_arc_directions(
+    params: WesternNatalInput,
+    ctx: Context,
+    planet: str = Field(..., description="Planet whose arc directs the chart (e.g., 'Venus'; 'Sun' gives classic solar arc)"),
+    progressed_day: str = Field(..., description="Target date day for the direction (e.g., '13')"),
+    progressed_month: str = Field(..., description="Target date month for the direction (e.g., '06')"),
+    progressed_year: str = Field(..., description="Target date year for the direction (e.g., '2021')"),
+) -> str:
     """Get planetary arc directions for the natal chart.
 
-    Returns solar arc and other planetary arc directions, a predictive
-    technique where all natal planets are advanced by the Sun's progressed
-    distance. When directed planets aspect natal positions, they indicate
-    significant life events and turning points.
+    Returns arc directions for the chosen planet to the given target date,
+    a predictive technique where all natal planets are advanced by the
+    planet's progressed distance. When directed planets aspect natal
+    positions, they indicate significant life events and turning points.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/planetary-arc-directions", _natal_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
+    payload = _natal_payload(params)
+    payload.update({
+        "planet": planet,
+        "progressed_day": progressed_day,
+        "progressed_month": progressed_month,
+        "progressed_year": progressed_year,
+    })
+    return await _call_divine_api("/western-api/v1/planetary-arc-directions", payload, API_HOST_8, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_secondary_progressions", annotations=TOOL_ANNOTATIONS)
-async def divine_western_secondary_progressions(params: WesternNatalInput, ctx: Context) -> str:
+async def divine_western_secondary_progressions(
+    params: WesternNatalInput,
+    ctx: Context,
+    progressed_day: str = Field(..., description="Target date day for the progression (e.g., '13')"),
+    progressed_month: str = Field(..., description="Target date month for the progression (e.g., '06')"),
+    progressed_year: str = Field(..., description="Target date year for the progression (e.g., '2021')"),
+    progressed_hour: str = Field(..., description="Target time hour in 24h format (e.g., '12')"),
+    progressed_min: str = Field(..., description="Target time minute (e.g., '50')"),
+    progressed_sec: str = Field(..., description="Target time second (e.g., '20')"),
+    progressed_type: str = Field(..., description="Progression rate method (e.g., 'ARMC1_NAIBOD')"),
+    planet: str | None = Field(default=None, description="Optional planet to focus the progression on (e.g., 'Venus')"),
+) -> str:
     """Get secondary progressions for the natal chart.
 
-    Returns the secondary progressed chart where each day after birth
-    equals one year of life. Secondary progressions reveal the inner
+    Returns the secondary progressed chart for the given target date/time,
+    where each day after birth equals one year of life, using the chosen
+    progressed_type rate method. Secondary progressions reveal the inner
     psychological evolution of the native, showing gradual shifts in
     identity, emotional needs, and life direction over time.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/secondary-progressions", _natal_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
+    payload = _natal_payload(params)
+    payload.update({
+        "progressed_day": progressed_day,
+        "progressed_month": progressed_month,
+        "progressed_year": progressed_year,
+        "progressed_hour": progressed_hour,
+        "progressed_min": progressed_min,
+        "progressed_sec": progressed_sec,
+        "progressed_type": progressed_type,
+    })
+    if planet is not None:
+        payload["planet"] = planet
+    return await _call_divine_api("/western-api/v1/secondary-progressions", payload, API_HOST_8, api_key=api_key, auth_token=auth_token)
 
 
 # ══════════════════════════════════════════════
-# PRENATAL TOOLS (2) — astroapi-8.divineapi.com
+# PRENATAL TOOLS (2) -astroapi-8.divineapi.com
 # ══════════════════════════════════════════════
 
 
 @mcp.tool(name="divine_western_prenatal_list", annotations=TOOL_ANNOTATIONS)
-async def divine_western_prenatal_list(params: WesternNatalInput, ctx: Context) -> str:
+async def divine_western_prenatal_list(
+    params: WesternNatalInput,
+    ctx: Context,
+    prenatal_type: str = Field(..., description="Prenatal event type (e.g., 'SYZYGY' for the last New/Full Moon before birth)"),
+) -> str:
     """Get a list of prenatal eclipses and lunations for the natal chart.
 
-    Returns the prenatal eclipses (solar and lunar eclipses before birth)
-    and the prenatal lunation (last New or Full Moon before birth). These
-    prenatal celestial events are believed to set the karmic backdrop and
-    soul-level intentions for the incarnation.
+    Returns the prenatal events of the chosen prenatal_type before birth,
+    each with a prenatal_key for use with divine_western_prenatal_details.
+    These prenatal celestial events are believed to set the karmic backdrop
+    and soul-level intentions for the incarnation.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/prenatal-list", _natal_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
+    payload = _natal_payload(params)
+    payload["prenatal_type"] = prenatal_type
+    return await _call_divine_api("/western-api/v1/prenatal-list", payload, API_HOST_8, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_prenatal_details", annotations=TOOL_ANNOTATIONS)
-async def divine_western_prenatal_details(params: WesternNatalInput, ctx: Context) -> str:
+async def divine_western_prenatal_details(
+    params: WesternNatalInput,
+    ctx: Context,
+    prenatal_key: str = Field(..., description="Prenatal event identifier from divine_western_prenatal_list (e.g., 'SYZYGY_NM_P_648635040000')"),
+) -> str:
     """Get detailed prenatal eclipse and lunation analysis for the natal chart.
 
-    Returns detailed interpretation of the prenatal eclipses and lunation,
-    including their sign, degree, aspects to natal planets, and meaning.
-    The prenatal eclipse degree is considered a sensitive point in the chart
-    that remains active throughout life.
+    Returns detailed chart data for the prenatal event identified by
+    prenatal_key (from divine_western_prenatal_list), including planetary
+    positions, sign, degree, and aspects to natal planets. The prenatal
+    eclipse degree is considered a sensitive point in the chart that
+    remains active throughout life.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/prenatal-details", _natal_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
+    payload = _natal_payload(params)
+    payload["prenatal_key"] = prenatal_key
+    return await _call_divine_api("/western-api/v1/prenatal-details", payload, API_HOST_8, api_key=api_key, auth_token=auth_token)
 
 
 # ──────────────────────────────────────────────
-# OAuth Login Form — /divine-login
+# OAuth Login Form -/divine-login
 # ──────────────────────────────────────────────
 
 _LOGIN_HTML = """<!DOCTYPE html>
