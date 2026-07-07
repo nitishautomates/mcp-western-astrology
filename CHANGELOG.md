@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (2026-07-08): param parity fixes from the live-API audit
+## 1.3.0 (2026-07-08): param parity fixes from the live-API audit
 
 Based on the 2026-07-08 param parity audit (collection + live-API curl verification, see PARAM-PARITY-AUDIT-WESTERN.md in the computer-use project). Before these fixes, 38 of 56 tools failed on every call made with default inputs. All changes below were verified against the live API (34/34 functional scenarios passing, including invalid-input cases).
 
