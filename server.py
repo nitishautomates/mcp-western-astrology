@@ -332,6 +332,36 @@ class WesternTransitPlanetInput(BaseModel):
 
 
 # ──────────────────────────────────────────────
+
+
+class WesternFullTransitInput(BaseModel):
+    """Input for full transit API calls requiring both natal and transit date/location."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
+
+    full_name: str = Field(..., description="Full name of the person", min_length=1, max_length=200)
+    day: str = Field(..., description="Birth day (e.g., '24')", min_length=1, max_length=2)
+    month: str = Field(..., description="Birth month (e.g., '05')", min_length=1, max_length=2)
+    year: str = Field(..., description="Birth year (e.g., '1990')", min_length=4, max_length=4)
+    hour: str = Field(..., description="Birth hour in 24h format (e.g., '14')", min_length=1, max_length=2)
+    min: str = Field(..., description="Birth minute (e.g., '40')", min_length=1, max_length=2)
+    sec: str = Field(default="0", description="Birth second", max_length=2)
+    gender: str = Field(..., description="Gender: 'male' or 'female'")
+    place: str = Field(..., description="Birth place (e.g., 'New Delhi')", min_length=1, max_length=200)
+    lat: str = Field(..., description="Latitude (e.g., '28.7041')")
+    lon: str = Field(..., description="Longitude (e.g., '77.1025')")
+    tzone: str = Field(..., description="Timezone offset (e.g., '5.5')")
+    transit_day: str = Field(..., description="Transit day (e.g., '5')", min_length=1, max_length=2)
+    transit_month: str = Field(..., description="Transit month (e.g., '08')", min_length=1, max_length=2)
+    transit_year: str = Field(..., description="Transit year (e.g., '2025')", min_length=4, max_length=4)
+    transit_hour: str = Field(default="0", description="Transit hour (e.g., '12')", max_length=2)
+    transit_min: str = Field(default="0", description="Transit minute", max_length=2)
+    transit_sec: str = Field(default="0", description="Transit second", max_length=2)
+    transit_place: str = Field(..., description="Transit location (e.g., 'New Delhi')", min_length=1, max_length=200)
+    transit_lat: str = Field(..., description="Transit latitude (e.g., '28.7041')")
+    transit_lon: str = Field(..., description="Transit longitude (e.g., '77.1025')")
+    transit_tzone: str = Field(..., description="Transit timezone (e.g., '5.5')")
+
 # Shared API Client
 # ──────────────────────────────────────────────
 
@@ -471,6 +501,20 @@ def _transit_planet_payload(params: WesternTransitPlanetInput) -> dict:
 
 
 # ══════════════════════════════════════════════
+
+def _full_transit_payload(params) -> dict:
+    return {
+        "full_name": params.full_name, "day": params.day, "month": params.month,
+        "year": params.year, "hour": params.hour, "min": params.min,
+        "sec": params.sec, "gender": params.gender, "place": params.place,
+        "lat": params.lat, "lon": params.lon, "tzone": params.tzone,
+        "transit_day": params.transit_day, "transit_month": params.transit_month,
+        "transit_year": params.transit_year, "transit_hour": params.transit_hour,
+        "transit_min": params.transit_min, "transit_sec": params.transit_sec,
+        "transit_place": params.transit_place, "transit_lat": params.transit_lat,
+        "transit_lon": params.transit_lon, "transit_tzone": params.transit_tzone,
+    }
+
 # NATAL TOOLS (10) — astroapi-4.divineapi.com
 # ══════════════════════════════════════════════
 
@@ -546,7 +590,7 @@ async def divine_western_natal_wheel_chart(
         payload["outter_background"] = outter_background
     if wheel_background is not None:
         payload["wheel_background"] = wheel_background
-    return await _call_divine_api("/western-api/v1/natal-wheel-chart", payload, API_HOST_4, api_key=api_key, auth_token=auth_token)
+    return await _call_divine_api("/western-api/v2/natal-wheel-chart", payload, API_HOST_8, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_general_sign_report", annotations=TOOL_ANNOTATIONS)
@@ -689,7 +733,7 @@ async def divine_western_synastry_natal_wheel_chart(params: WesternSynastryInput
     the outer wheel for visual aspect analysis.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/synastry/natal-wheel-chart", _synastry_payload(params), API_HOST_4, api_key=api_key, auth_token=auth_token)
+    return await _call_divine_api("/western-api/v2/synastry/natal-wheel-chart", _synastry_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_synastry_aspect", annotations=TOOL_ANNOTATIONS)
@@ -702,7 +746,7 @@ async def divine_western_synastry_aspect(params: WesternSynastryInput, ctx: Cont
     revealing attraction, friction, and compatibility.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/synastry/aspect", _synastry_payload(params), API_HOST_4, api_key=api_key, auth_token=auth_token)
+    return await _call_divine_api("/western-api/v2/synastry/aspect-table", _synastry_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_synastry_harmonious_reading", annotations=TOOL_ANNOTATIONS)
@@ -871,7 +915,7 @@ async def divine_western_transit_monthly(params: WesternNatalInput, ctx: Context
     and significant planetary ingresses that shape the month's themes.
     """
     api_key, auth_token = _get_credentials(ctx)
-    return await _call_divine_api("/western-api/v1/transit/monthly", _natal_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
+    return await _call_divine_api("/western-api/v2/transit/monthly", _natal_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_transit_house", annotations=TOOL_ANNOTATIONS)
@@ -926,6 +970,42 @@ async def divine_western_planet_combustion_transit(params: WesternTransitPlanetI
 
 
 # ══════════════════════════════════════════════
+
+
+@mcp.tool(name="divine_western_transit_wheel_chart", annotations=TOOL_ANNOTATIONS)
+async def divine_western_transit_wheel_chart(params: WesternFullTransitInput, ctx: Context) -> str:
+    """Generate a transit wheel chart overlaying current transits on the natal chart.
+
+    Returns a visual wheel chart showing natal planet positions in the inner
+    ring and current transit positions in the outer ring.
+    """
+    api_key, auth_token = _get_credentials(ctx)
+    return await _call_divine_api("/western-api/v1/transit/wheel-chart", _full_transit_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
+
+
+@mcp.tool(name="divine_western_transit_planetary_positions", annotations=TOOL_ANNOTATIONS)
+async def divine_western_transit_planetary_positions(params: WesternFullTransitInput, ctx: Context) -> str:
+    """Get planetary positions for both natal and transit charts.
+
+    Returns detailed planetary positions for both the birth chart and the
+    transit date, showing sign, degree, house placement, and aspects.
+    """
+    api_key, auth_token = _get_credentials(ctx)
+    return await _call_divine_api("/western-api/v1/transit/planetary-positions", _full_transit_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
+
+
+@mcp.tool(name="divine_western_planetary_ingress", annotations=TOOL_ANNOTATIONS)
+async def divine_western_planetary_ingress(params: WesternTransitPlanetInput, ctx: Context) -> str:
+    """Get planetary ingress data for a specific planet.
+
+    Returns sign ingress dates for the specified planet during the given
+    month and year. An ingress occurs when a planet moves from one zodiac
+    sign to the next, marking significant shifts in energy and themes.
+    """
+    api_key, auth_token = _get_credentials(ctx)
+    return await _call_divine_api("/western-api/v1/planetary-ingress", _transit_planet_payload(params), API_HOST_8, api_key=api_key, auth_token=auth_token)
+
+
 # COMPOSITE TOOLS (4) — astroapi-8.divineapi.com
 # ══════════════════════════════════════════════
 
@@ -1334,6 +1414,36 @@ if _TRANSPORT == "http":
 # ──────────────────────────────────────────────
 
 
+
+
+class ApiKeyToJwtMiddleware:
+    """ASGI middleware that converts X-Divine-Api-Key/Token headers into a JWT Bearer token."""
+
+    def __init__(self, app, jwt_secret):
+        self.app = app
+        self.jwt_secret = jwt_secret
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            headers_list = scope.get("headers", [])
+            headers_dict = {k: v for k, v in headers_list}
+            api_key = headers_dict.get(b"x-divine-api-key", b"").decode()
+            auth_token = headers_dict.get(b"x-divine-auth-token", b"").decode()
+            has_bearer = any(
+                v.startswith(b"Bearer ") for k, v in headers_list if k == b"authorization"
+            )
+            if api_key and auth_token and not has_bearer:
+                token = jwt.encode(
+                    {"divine_api_key": api_key, "divine_auth_token": auth_token,
+                     "exp": int(time.time()) + 3600, "iat": int(time.time())},
+                    self.jwt_secret, algorithm="HS256",
+                )
+                new_headers = [(k, v) for k, v in headers_list if k != b"authorization"]
+                new_headers.append((b"authorization", f"Bearer {token}".encode()))
+                scope = dict(scope, headers=new_headers)
+        await self.app(scope, receive, send)
+
+
 def create_http_app():
     """Create ASGI app for production HTTP deployment with uvicorn."""
     from starlette.middleware.cors import CORSMiddleware
@@ -1353,7 +1463,7 @@ def create_http_app():
         ],
         expose_headers=["mcp-session-id"],
     )
-    return app
+    return ApiKeyToJwtMiddleware(app, _JWT_SECRET)
 
 
 # Module-level ASGI app for uvicorn (only created in HTTP mode)
