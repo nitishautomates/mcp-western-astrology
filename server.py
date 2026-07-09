@@ -179,8 +179,17 @@ if _TRANSPORT == "http":
         required_scopes=[],
     )
 
+_SERVER_INSTRUCTIONS = """DivineAPI Western astrology: Natal, Synastry, Transit, Composite, Progressions, planetary returns, and fixed stars.
+
+Input conventions: dates as separate day, month, year fields (plus hour, min, sec); place is a plain city string; lat and lon are decimals; tzone is a decimal UTC offset. house_system accepts friendly names (placidus, koch, whole-sign, campanus, regiomontanus, porphyry, equal, morinus, alcabitius) or single-letter codes; it defaults to placidus.
+
+Chaining: the list/details tools work in pairs. Call divine_western_fixed_stars_list, divine_western_planet_returns_list, or divine_western_prenatal_list first, then pass a key from the result to the matching _details tool.
+
+Output: chart and wheel tools can return large SVG payloads. Failures come back as errors with the accepted values listed, so on a validation error, correct the input and retry."""
+
 mcp = FastMCP(
     "divineapi_western_astrology_mcp",
+    instructions=_SERVER_INSTRUCTIONS,
     stateless_http=(_TRANSPORT == "http"),
     transport_security=_transport_security,
     auth=_auth_settings,

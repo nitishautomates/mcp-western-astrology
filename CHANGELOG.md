@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.4.2] - 2026-07-08
+
+### Added
+
+Add server-level instructions (how-to-use note read at connect: conventions, house_system values, list/details chaining).
+
 ## [1.4.1] - 2026-07-08
 
 ### Fixed
