@@ -3,7 +3,7 @@
 Divine API - Western Astrology MCP Server
 
 Official MCP server by Divine API for Western Astrology services.
-Provides 56 tools for Natal Charts, Synastry, Transits, Composite Charts,
+Provides 57 tools for Natal Charts, Synastry, Transits, Composite Charts,
 Progressions, Returns, Prenatal analysis, and Advanced Natal techniques.
 
 Setup:
@@ -447,6 +447,49 @@ class WesternFullTransitInput(BaseModel):
     transit_lat: str = Field(..., description="Transit latitude (e.g., '28.7041')")
     transit_lon: str = Field(..., description="Transit longitude (e.g., '77.1025')")
     transit_tzone: str = Field(..., description="Transit timezone (e.g., '5.5')")
+
+
+class WesternCustomTransitInput(BaseModel):
+    """Input for the custom transit API: natal birth details plus a fully specified transit moment and location.
+
+    Unlike the basic-transit input, every transit-moment field is required, including the
+    transit place, latitude, longitude, and timezone, so transits can be computed for any
+    moment observed from any location on Earth.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
+
+    full_name: str = Field(..., description="Full name of the person", min_length=1, max_length=200)
+    day: str = Field(..., description="Birth day (e.g., '24')", min_length=1, max_length=2)
+    month: str = Field(..., description="Birth month (e.g., '05')", min_length=1, max_length=2)
+    year: str = Field(..., description="Birth year (e.g., '1990')", min_length=4, max_length=4)
+    hour: str = Field(..., description="Birth hour in 24h format (e.g., '14')", min_length=1, max_length=2)
+    min: str = Field(..., description="Birth minute (e.g., '40')", min_length=1, max_length=2)
+    sec: str = Field(default="0", description="Birth second", max_length=2)
+    gender: str = Field(..., description="Gender: 'male' or 'female'")
+    place: str = Field(..., description="Birth place (e.g., 'New Delhi')", min_length=1, max_length=200)
+    lat: str = Field(..., description="Latitude (e.g., '28.7041')")
+    lon: str = Field(..., description="Longitude (e.g., '77.1025')")
+    tzone: str = Field(..., description="Timezone offset (e.g., '5.5')")
+    lan: str = Field(default="en", description="Language code for response (default 'en')")
+    transit_day: str = Field(..., description="Transit day (e.g., '5')", min_length=1, max_length=2)
+    transit_month: str = Field(..., description="Transit month (e.g., '08')", min_length=1, max_length=2)
+    transit_year: str = Field(..., description="Transit year (e.g., '2025')", min_length=4, max_length=4)
+    transit_hour: str = Field(..., description="Transit hour in 24h format (e.g., '12')", min_length=1, max_length=2)
+    transit_min: str = Field(..., description="Transit minute (e.g., '30')", min_length=1, max_length=2)
+    transit_sec: str = Field(..., description="Transit second (e.g., '00')", min_length=1, max_length=2)
+    transit_place: str = Field(..., description="Transit location (e.g., 'New Delhi')", min_length=1, max_length=200)
+    transit_lat: str = Field(..., description="Transit latitude (e.g., '28.7041')")
+    transit_lon: str = Field(..., description="Transit longitude (e.g., '77.1025')")
+    transit_tzone: str = Field(..., description="Transit timezone (e.g., '5.5')")
+
+    @field_validator("gender")
+    @classmethod
+    def validate_gender(cls, v: str) -> str:
+        v = v.lower().strip()
+        if v not in VALID_GENDERS:
+            raise ValueError(f"Gender must be 'male' or 'female', got '{v}'")
+        return v
 
 
 class WesternMoonPhaseCalendarInput(BaseModel):
@@ -1062,6 +1105,22 @@ async def divine_western_transit_basic(
         "transit_sec": transit_sec,
     })
     return await _call_divine_api("/western-api/v1/transit/basic", payload, API_HOST_4, api_key=api_key, auth_token=auth_token)
+
+
+@mcp.tool(name="divine_western_custom_transit", annotations=TOOL_ANNOTATIONS)
+async def divine_western_custom_transit(params: WesternCustomTransitInput, ctx: Context) -> str:
+    """Get a custom transit report for the natal chart at a fully specified transit moment and place.
+
+    Like divine_western_transit_basic, but every transit-moment field is supplied
+    explicitly: the transit date and time plus the transit place, latitude, longitude,
+    and timezone. Returns the planetary transits and their aspects to the birth chart
+    as observed from any location on Earth at the exact moment you provide, indicating
+    which life areas are being activated.
+    """
+    api_key, auth_token = _get_credentials(ctx)
+    payload = _full_transit_payload(params)
+    payload["lan"] = params.lan
+    return await _call_divine_api("/western-api/v1/transit/custom", payload, API_HOST_4, api_key=api_key, auth_token=auth_token)
 
 
 @mcp.tool(name="divine_western_transit_daily", annotations=TOOL_ANNOTATIONS)

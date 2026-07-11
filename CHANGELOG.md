@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.5.0] - 2026-07-11
+
+### Added
+
+**`divine_western_custom_transit`: custom transit report at a fully specified transit moment and location.** POST /western-api/v1/transit/custom on astroapi-4. Takes the full natal birth block plus all ten transit-moment fields as required inputs (`transit_day`, `transit_month`, `transit_year`, `transit_hour`, `transit_min`, `transit_sec`, `transit_place`, `transit_lat`, `transit_lon`, `transit_tzone`) via a dedicated `WesternCustomTransitInput` model. Unlike `divine_western_transit_basic`, it also accepts the transit place, latitude, longitude, and timezone, so transits can be computed for any moment observed from any location on Earth. Brings the Western tool count to 57 (Transit group 11 -> 12).
+
 ## [1.4.2] - 2026-07-08
 
 ### Added

@@ -3,7 +3,7 @@
   "name": "com.divineapi/western",
   "title": "Divine API - Western Astrology",
   "description": "Official Divine API MCP for Western Astrology: Natal, Synastry, Transit, Composite, Progressions.",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "remotes": [
     {
       "type": "streamable-http",
